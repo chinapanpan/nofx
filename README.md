@@ -86,6 +86,9 @@ pnpm run build
 Static assets for the frontend are produced by Vite. The backend is a standard FastAPI app that can be run with Uvicorn or any ASGI server.
 
 
+## Prompt guidance
+Referenced from another git repo: https://gist.github.com/wquguru/7d268099b8c04b7e5b6ad6fae922ae83
+
 
 ## License
 MIT
