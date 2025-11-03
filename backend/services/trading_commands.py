@@ -108,9 +108,18 @@ def place_ai_driven_crypto_order(max_ratio: float = 0.2) -> None:
                     continue
 
                 # Call AI for trading decision
-                decision = call_ai_for_decision(account, portfolio, prices)
-                if not decision or not isinstance(decision, dict):
+                ai_result = call_ai_for_decision(account, portfolio, prices)
+                if not ai_result or not isinstance(ai_result, dict):
                     logger.warning(f"Failed to get AI decision for {account.name}, skipping")
+                    continue
+                
+                # Extract decision, prompt, and raw response
+                decision = ai_result.get("decision", {})
+                prompt = ai_result.get("prompt", "")
+                raw_response = ai_result.get("raw_response", "")
+                
+                if not decision or not isinstance(decision, dict):
+                    logger.warning(f"Invalid decision format for {account.name}, skipping")
                     continue
 
                 operation = decision.get("operation", "").lower() if decision.get("operation") else ""
@@ -125,31 +134,31 @@ def place_ai_driven_crypto_order(max_ratio: float = 0.2) -> None:
                 if operation not in ["open", "close", "hold"]:
                     logger.warning(f"Invalid operation '{operation}' from AI for {account.name}, skipping")
                     # Save invalid decision for debugging
-                    save_ai_decision(db, account, decision, portfolio, executed=False)
+                    save_ai_decision(db, account, decision, portfolio, executed=False, prompt=prompt, raw_response=raw_response)
                     continue
                 
                 if operation == "hold":
                     logger.info(f"AI decided to HOLD for {account.name}")
                     # Save hold decision
-                    save_ai_decision(db, account, decision, portfolio, executed=True)
+                    save_ai_decision(db, account, decision, portfolio, executed=True, prompt=prompt, raw_response=raw_response)
                     continue
 
                 if symbol not in SUPPORTED_SYMBOLS:
                     logger.warning(f"Invalid symbol '{symbol}' from AI for {account.name}, skipping")
                     # Save invalid decision for debugging
-                    save_ai_decision(db, account, decision, portfolio, executed=False)
+                    save_ai_decision(db, account, decision, portfolio, executed=False, prompt=prompt, raw_response=raw_response)
                     continue
                 
                 if direction not in ["long", "short"]:
                     logger.warning(f"Invalid direction '{direction}' from AI for {account.name}, skipping")
                     # Save invalid decision for debugging
-                    save_ai_decision(db, account, decision, portfolio, executed=False)
+                    save_ai_decision(db, account, decision, portfolio, executed=False, prompt=prompt, raw_response=raw_response)
                     continue
 
                 if target_portion <= 0 or target_portion > 1:
                     logger.warning(f"Invalid target_portion {target_portion} from AI for {account.name}, skipping")
                     # Save invalid decision for debugging
-                    save_ai_decision(db, account, decision, portfolio, executed=False)
+                    save_ai_decision(db, account, decision, portfolio, executed=False, prompt=prompt, raw_response=raw_response)
                     continue
 
                 # Get current price
@@ -157,7 +166,7 @@ def place_ai_driven_crypto_order(max_ratio: float = 0.2) -> None:
                 if not price or price <= 0:
                     logger.warning(f"Invalid price for {symbol} for {account.name}, skipping")
                     # Save decision with execution failure
-                    save_ai_decision(db, account, decision, portfolio, executed=False)
+                    save_ai_decision(db, account, decision, portfolio, executed=False, prompt=prompt, raw_response=raw_response)
                     continue
 
                 # Calculate quantity based on operation
@@ -171,7 +180,7 @@ def place_ai_driven_crypto_order(max_ratio: float = 0.2) -> None:
                     
                     if existing_position and float(existing_position.quantity) > 0:
                         logger.warning(f"Cannot open {direction} position on {symbol} - already have a {existing_position.side} position. Only ONE position per coin allowed. Close existing position first.")
-                        save_ai_decision(db, account, decision, portfolio, executed=False)
+                        save_ai_decision(db, account, decision, portfolio, executed=False, prompt=prompt, raw_response=raw_response)
                         continue
                     
                     # Open a new position - calculate quantity based on available cash and target portion
@@ -186,7 +195,7 @@ def place_ai_driven_crypto_order(max_ratio: float = 0.2) -> None:
                     if quantity <= 0:
                         logger.info(f"Calculated {direction.upper()} quantity <= 0 for {symbol} for {account.name}, skipping")
                         # Save decision with execution failure
-                        save_ai_decision(db, account, decision, portfolio, executed=False)
+                        save_ai_decision(db, account, decision, portfolio, executed=False, prompt=prompt, raw_response=raw_response)
                         continue
                     
                     # Set side based on direction
@@ -203,14 +212,14 @@ def place_ai_driven_crypto_order(max_ratio: float = 0.2) -> None:
                     if not position or float(position.quantity) <= 0:
                         logger.warning(f"No position available to close for {symbol} for {account.name}, skipping")
                         # Save decision with execution failure
-                        save_ai_decision(db, account, decision, portfolio, executed=False)
+                        save_ai_decision(db, account, decision, portfolio, executed=False, prompt=prompt, raw_response=raw_response)
                         continue
                     
                     # Validate that direction matches the position side
                     position_side = (position.side or "LONG").lower()
                     if position_side != direction:
                         logger.warning(f"Cannot close {direction} position on {symbol} - current position is {position_side.upper()}. Direction mismatch!")
-                        save_ai_decision(db, account, decision, portfolio, executed=False)
+                        save_ai_decision(db, account, decision, portfolio, executed=False, prompt=prompt, raw_response=raw_response)
                         continue
                     
                     # For leveraged positions, use total quantity; for spot, use available_quantity
@@ -230,7 +239,7 @@ def place_ai_driven_crypto_order(max_ratio: float = 0.2) -> None:
                     
                     if quantity <= 0:
                         logger.info(f"Calculated close quantity <= 0 for {symbol} for {account.name}, skipping")
-                        save_ai_decision(db, account, decision, portfolio, executed=False)
+                        save_ai_decision(db, account, decision, portfolio, executed=False, prompt=prompt, raw_response=raw_response)
                         continue
                     
                     # Set side to close the position: SELL closes LONG, BUY closes SHORT
@@ -268,7 +277,7 @@ def place_ai_driven_crypto_order(max_ratio: float = 0.2) -> None:
                 
                 # Save decision with final execution status (only called once)
                 order_id = order.id if order else None
-                save_ai_decision(db, account, decision, portfolio, executed=executed, order_id=order_id)
+                save_ai_decision(db, account, decision, portfolio, executed=executed, order_id=order_id, prompt=prompt, raw_response=raw_response)
 
             except Exception as account_err:
                 logger.error(f"AI-driven order placement failed for account {account.name}: {account_err}", exc_info=True)

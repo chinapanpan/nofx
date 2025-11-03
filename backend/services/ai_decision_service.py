@@ -206,6 +206,11 @@ def call_ai_for_decision(account: Account, portfolio: Dict, prices: Dict[str, fl
     
     Supports both OpenAI-compatible APIs and AWS Bedrock.
     For Bedrock, set base_url to: bedrock://region (e.g., bedrock://us-east-1)
+    
+    Returns a dict with:
+    - decision: the parsed decision dict
+    - prompt: the full prompt sent to LLM
+    - raw_response: the raw LLM response before parsing
     """
     # Check if this is a default API key
     if _is_default_api_key(account.api_key):
@@ -261,12 +266,16 @@ Rules:
 - leverage is typically 1-10x; only use high leverage (>5x) if you're very confident
 - Only choose symbols you have price data for"""
 
+        # Store the raw response for logging
+        raw_response = ""
+        
         # Check if using AWS Bedrock
         if _is_bedrock_endpoint(account.base_url):
             logger.info(f"Using AWS Bedrock for account {account.name}")
             text_content = _call_bedrock_api(account, prompt)
             if not text_content:
                 return None
+            raw_response = text_content
         else:
             # Use OpenAI-compatible API
             logger.info(f"Using OpenAI-compatible API for account {account.name}")
@@ -353,6 +362,9 @@ Rules:
             if not text_content:
                 logger.error(f"Empty content in AI response: {result}")
                 return None
+            
+            # Store raw response for logging
+            raw_response = text_content
 
         # Try to extract JSON from the text
         # Sometimes AI might wrap JSON in markdown code blocks
@@ -433,7 +445,13 @@ Rules:
             decision["direction"] = "long"
         else:
             decision["direction"] = decision["direction"].lower()
-        return decision
+        
+        # Return decision with prompt and raw response for logging
+        return {
+            "decision": decision,
+            "prompt": prompt,
+            "raw_response": raw_response
+        }
 
     except requests.RequestException as err:
         logger.error(f"AI API request failed: {err}")
@@ -452,8 +470,19 @@ Rules:
         return None
 
 
-def save_ai_decision(db: Session, account: Account, decision: Dict, portfolio: Dict, executed: bool = False, order_id: Optional[int] = None) -> None:
-    """Save AI decision to the decision log"""
+def save_ai_decision(db: Session, account: Account, decision: Dict, portfolio: Dict, executed: bool = False, order_id: Optional[int] = None, prompt: Optional[str] = None, raw_response: Optional[str] = None) -> None:
+    """Save AI decision to the decision log
+    
+    Args:
+        db: Database session
+        account: Account that made the decision
+        decision: Parsed decision dict
+        portfolio: Portfolio data at decision time
+        executed: Whether the decision was executed
+        order_id: Order ID if executed
+        prompt: Full prompt sent to LLM
+        raw_response: Raw LLM response before parsing
+    """
     try:
         operation = decision.get("operation", "").lower() if decision.get("operation") else ""
         symbol_raw = decision.get("symbol")
@@ -479,6 +508,17 @@ def save_ai_decision(db: Session, account: Account, decision: Dict, portfolio: D
         if leverage_val < 1:
             leverage_val = 1
 
+        # Serialize decision as JSON for llm_output
+        llm_output_str = json.dumps(decision, ensure_ascii=False)
+        
+        # Truncate fields if they exceed column limits
+        if prompt and len(prompt) > 10000:
+            prompt = prompt[:9997] + "..."
+        if raw_response and len(raw_response) > 10000:
+            raw_response = raw_response[:9997] + "..."
+        if llm_output_str and len(llm_output_str) > 2000:
+            llm_output_str = llm_output_str[:1997] + "..."
+
         # Create decision log entry
         decision_log = AIDecisionLog(
             account_id=account.id,
@@ -490,7 +530,10 @@ def save_ai_decision(db: Session, account: Account, decision: Dict, portfolio: D
             total_balance=Decimal(str(portfolio["total_assets"])),
             executed="true" if executed else "false",
             order_id=order_id,
-            leverage=leverage_val
+            leverage=leverage_val,
+            user_prompt=prompt,
+            reasoning_trace=raw_response,
+            llm_output=llm_output_str
         )
 
         db.add(decision_log)

@@ -236,6 +236,12 @@ class AIDecisionLog(Base):
     executed = Column(String(10), nullable=False, default="false")  # whether the decision was executed
     order_id = Column(Integer, ForeignKey("orders.id"), nullable=True)  # linked order if executed
     leverage = Column(Integer, nullable=False, default=1)
+    
+    # LLM Inference Logging
+    user_prompt = Column(String(10000), nullable=True)  # Full prompt sent to LLM
+    reasoning_trace = Column(String(10000), nullable=True)  # Raw LLM response before parsing
+    llm_output = Column(String(2000), nullable=True)  # Parsed JSON decision output
+    
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
 
     # Relationships
